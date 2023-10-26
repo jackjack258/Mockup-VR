@@ -1,6 +1,4 @@
-﻿#John Hunt
-
-
+﻿
 import requests
 import viz
 import vizfx
@@ -12,9 +10,10 @@ import base64
 import vizact
 import vizinfo
 import viztask
+import threading
 
-isCAVE = True
-lora_name="v18"
+isCAVE = False
+lora_name="v21"
 basemodel_name=""
 sampler_name='Restart'
 num_steps=35
@@ -62,6 +61,22 @@ def create_prompt(str, lora_name):
 	prompt = " <lora:" +lora_name+ ":1> " + "<lora:wrong:1> equirectangular " + str
 	return prompt
 
+
+def update_progress():
+    global progressBar  
+    while True:
+        response = requests.get(url='http://127.0.0.1:7860/sdapi/v1/progress')
+        if response.status_code == 200:
+            data = response.json()
+            progress = data['progress']  
+            progressBar.set(progress)  
+            if progress == 1:  
+                break  
+        else:
+            print('Error: ', response.status_code, response.reason)
+        yield viztask.waitTime(1)  
+
+
 def sendAPIrequest(prompt, num_steps, hiresFix):
     global sphere
     payload = {
@@ -73,9 +88,8 @@ def sendAPIrequest(prompt, num_steps, hiresFix):
         'negative_prompt': "wrong",
         "sampler_index": sampler_name,
     }
-    #Put IP of 
-	
-    response = requests.post(url='http://192.168.99.14:7860/forward', json=payload)
+    #response = requests.post(url='http://192.168.99.14:7860/forward', json=payload)
+    response = requests.post(url='http://127.0.0.1:7860/sdapi/v1/txt2img', json=payload)
     if response.status_code == 200:
         data = response.json()
         image_data = data['images'][0]
@@ -92,15 +106,17 @@ def sendAPIrequest(prompt, num_steps, hiresFix):
 def onSubmit(button, state):
     if button == submitButton and state == viz.DOWN:
         num_steps = int(numStepsBox.get())
-        hiresFix = bool(hires.get())  # Get the state of the checkbox
-        sendAPIrequest(create_prompt(promptBox.get(), lora_name), num_steps, hiresFix)
+        hiresFix = bool(hires.get())  
+        threading.Thread(target=sendAPIrequest, args=(create_prompt(promptBox.get(), lora_name), num_steps, hiresFix)).start()
+        viztask.schedule(update_progress())  # Schedule the update_progress coroutine
+
 
 if isCAVE:
     CONFIG_FILE = "E:\\VizardProjects\\_CaveConfigFiles\\vizconnect_config_CaveFloor+ART_headnode.py"
     vizconnect.go(CONFIG_FILE)
     viewPoint = vizconnect.addViewpoint(pos=[0,10,0])
-	#viewPoint.add(vizconnect.getDisplay())
-	#vizconnect.resetViewpoints()
+    #viewPoint.add(vizconnect.getDisplay())
+    #vizconnect.resetViewpoints()
     dtrack_manager = MyDtrackManager()
     dtrack_manager.startDefaultHeadPosition()
 else:
@@ -108,6 +124,7 @@ else:
     viz.fov(100)
 
 env = vizfx.addChild('mars test background scene.osgb')
+progressBar = None
 
 txt2imgGUI = vizinfo.InfoPanel('',title='txt2img gui menu',icon=False)
 
@@ -115,6 +132,8 @@ promptBox = txt2imgGUI.addLabelItem('Enter Prompt',viz.addTextbox())
 txt2imgGUI.addSeparator(padding=(20,20))
 numStepsBox = txt2imgGUI.addLabelItem('Number of Steps', viz.addTextbox())
 txt2imgGUI.addSeparator(padding=(20,20))
+progressBar = viz.addProgressBar('Progress')
+txt2imgGUI.addItem(progressBar)
 
 hires = txt2imgGUI.addLabelItem('hires fix', viz.addCheckbox())
 

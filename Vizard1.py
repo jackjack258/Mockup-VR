@@ -1,4 +1,7 @@
-﻿import requests
+﻿#John Hunt
+
+
+import requests
 import viz
 import vizfx
 import vizconnect
@@ -10,15 +13,48 @@ import vizact
 import vizinfo
 import viztask
 
-isCAVE = False
-
+isCAVE = True
 lora_name="v18"
 basemodel_name=""
-sampler_name='DPM++ 3M SDE Karras'
+sampler_name='Restart'
 num_steps=35
 hiresFix=False
-width=1448
-height=724
+width=1408
+height=704
+
+ALMOST_ZERO=0.000001
+class MyDtrackManager():
+	def __init__(self, default_head_pos=[0,1,0]):
+		self.default_head_pos = default_head_pos
+		self.wrapped_tracker = None
+		self.raw_vrpn = None
+		self.dtrack_updater = None
+					
+	def startDefaultHeadPosition(self):
+		self.wrapped_tracker = vizconnect.getTracker("dtrack_head")
+		self.raw_vrpn = self.wrapped_tracker.getRaw()
+		
+		fakeTracker = viz.addGroup()
+		fakeTracker.setPosition(self.default_head_pos)
+		self.wrapped_tracker.setRaw(fakeTracker)
+		
+		#This calls check_dtrack each frame
+		self.dtrack_updater = vizact.onupdate(0, self.check_dtrack)
+	
+	def check_dtrack(self):
+		x, y, z = self.raw_vrpn.getPosition()
+		atOrigin = self.isAlmostZero(x) or self.isAlmostZero(y) or self.isAlmostZero(z)
+		
+		if not atOrigin:
+			self.wrapped_tracker.setRaw(self.raw_vrpn)
+			self.dtrack_updater.remove()
+	
+	#Will move to other library
+	def isAlmostZero(self, val):
+		if abs(val) <= ALMOST_ZERO:
+			return True
+		else:
+			return False
 
 sphere = None
 
@@ -37,7 +73,9 @@ def sendAPIrequest(prompt, num_steps, hiresFix):
         'negative_prompt': "wrong",
         "sampler_index": sampler_name,
     }
-    response = requests.post(url='http://127.0.0.1:7860/sdapi/v1/txt2img', json=payload)
+    #Put IP of 
+	
+    response = requests.post(url='http://192.168.99.14:7860/forward', json=payload)
     if response.status_code == 200:
         data = response.json()
         image_data = data['images'][0]
@@ -58,10 +96,13 @@ def onSubmit(button, state):
         sendAPIrequest(create_prompt(promptBox.get(), lora_name), num_steps, hiresFix)
 
 if isCAVE:
-	vizconnect.go()
-	viewPoint = vizconnect.addViewpoint(pos=[0,10,0])
-	viewPoint.add(vizconnect.getDisplay())
-	vizconnect.resetViewpoints()
+    CONFIG_FILE = "E:\\VizardProjects\\_CaveConfigFiles\\vizconnect_config_CaveFloor+ART_headnode.py"
+    vizconnect.go(CONFIG_FILE)
+    viewPoint = vizconnect.addViewpoint(pos=[0,10,0])
+	#viewPoint.add(vizconnect.getDisplay())
+	#vizconnect.resetViewpoints()
+    dtrack_manager = MyDtrackManager()
+    dtrack_manager.startDefaultHeadPosition()
 else:
     viz.go()
     viz.fov(100)

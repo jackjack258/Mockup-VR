@@ -14,7 +14,7 @@ import threading
 
 isCAVE = False
 lora_name="v21"
-basemodel_name=""
+basemodel_name="XL45"
 sampler_name='Restart'
 num_steps=35
 hiresFix=False
@@ -87,6 +87,10 @@ def sendAPIrequest(prompt, num_steps, hiresFix):
         'height': height,
         'negative_prompt': "wrong",
         "sampler_index": sampler_name,
+        'hr_scale': 2,
+        "hr_second_pass_steps": 10,
+        "hr_upscaler": "SwinIR_4x",
+        "denoising_strength": 0.5,
     }
     #response = requests.post(url='http://192.168.99.14:7860/forward', json=payload)
     response = requests.post(url='http://127.0.0.1:7860/sdapi/v1/txt2img', json=payload)
@@ -126,9 +130,10 @@ else:
 env = vizfx.addChild('mars test background scene.osgb')
 progressBar = None
 
-txt2imgGUI = vizinfo.InfoPanel('',title='txt2img gui menu',icon=False)
+txt2imgGUI = vizinfo.InfoPanel('',title='txt2img gui menu',icon=False,)
 
 promptBox = txt2imgGUI.addLabelItem('Enter Prompt',viz.addTextbox())
+promptBox.length(6)
 txt2imgGUI.addSeparator(padding=(20,20))
 numStepsBox = txt2imgGUI.addLabelItem('Number of Steps', viz.addTextbox())
 txt2imgGUI.addSeparator(padding=(20,20))

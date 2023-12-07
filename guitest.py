@@ -355,4 +355,3 @@ inpaintButton = txt2imgGUI.addItem(viz.addButtonLabel('Inpaint Mode'), align=viz
 vizact.onbuttondown(submitButton, lambda: onSubmit(submitButton, viz.DOWN))
 vizact.onbuttondown(seedButton, lambda: onSubmit(seedButton, viz.DOWN))
 vizact.onbuttondown(inpaintButton, lambda: onSubmit(inpaintButton, viz.DOWN))
-

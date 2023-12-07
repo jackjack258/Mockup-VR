@@ -12,7 +12,9 @@ import numpy as np
 import vizfx
 from MyUtils import *
 import viztask
+import os
 
+buffer = None
 
 isCAVE = False
 isInpaintMode = False
@@ -31,9 +33,12 @@ quad = None
 startPos = None
 endPos = None
 selectionBox = []
-imgTexture = None
+image = None
 aspect_ratio = 2
+last_mod_time = None
+tex = viz.addTexture('output.png')
 
+clients = [viz.MASTER, viz.CLIENT1, viz.CLIENT2, viz.CLIENT3, viz.CLIENT4]
 
 
 class MyDtrackManager():
@@ -73,14 +78,14 @@ def create_inpaint_prompt(str, lora_name):
     return "an equirectangular " + str
 
 
-def update_progress():
+'''def update_progress():
     global progressBar, sphere
     while True:
         if isLAN:
             response = requests.get(url='http://127.0.0.1:7860/sdapi/v1/progress')
         else:
             
-            response = requests.get(url='http://192.168.99.14:7860/forward_progress', json=payload)
+            pass
         if response.status_code == 200:
             data = response.json()
             progress = data['progress']
@@ -91,13 +96,13 @@ def update_progress():
                 tex = viz.addTexture('temp.png')
                 if sphere is not None:
                     sphere.remove()
-                sphere = vizshape.addSphere(radius=1280, slices=20, stacks=20, axis=vizshape.AXIS_Y, lighting=False, texture=tex, flipFaces=True)
+                sphere = vizshape.addSphere(radius=128, slices=20, stacks=20, axis=vizshape.AXIS_Y, lighting=False, texture=tex, flipFaces=True)
             progressBar.set(progress)
             if progress == 1:
                 break
         else:
             print('Error: ', response.status_code, response.reason)
-        yield viztask.waitTime(1)
+        yield viztask.waitTime(1)'''
 
 
 def onInpaintSubmit():
@@ -147,24 +152,20 @@ def sendInpaintAPIrequest(prompt, steps):
     if isLAN:
         response = requests.post(url='http://127.0.0.1:7860/sdapi/v1/img2img', json=payload)
     else:
-        response = requests.post(url='http://192.168.99.14:7860/forward_img2img', json=payload)
+        response = requests.post(url='http://192.168.99.14:7860/forward', json=payload)
     
     if response.status_code == 200:
         data = response.json()
         image_data = data['images'][0]
         image = Image.open(io.BytesIO(base64.b64decode(image_data.split(",",1)[0])))
         image.save('output.png')
-        tex = viz.addTexture('output.png')
-        if sphere is not None:
-            sphere.remove()
-        sphere = vizshape.addSphere(radius=1280, slices=20, stacks=20, axis=vizshape.AXIS_Y, lighting=False, texture=tex, flipFaces=True)
     else:
         print('Error: ', response.status_code, response.reason)
 
 
 # Function to send API request
 def sendAPIrequest(prompt, num_steps, hiresFix):
-    global sphere
+
     payload = {
         'prompt': prompt,
         'steps': num_steps,
@@ -181,18 +182,36 @@ def sendAPIrequest(prompt, num_steps, hiresFix):
     if isLAN:
         response = requests.post(url='http://127.0.0.1:7860/sdapi/v1/txt2img', json=payload)
     else:
-        response = requests.post(url='http://192.168.99.14:7860/forward_txt2img', json=payload)
+        response = requests.post(url='http://192.168.99.14:7860/forward', json=payload)
     if response.status_code == 200:
         data = response.json()
         image_data = data['images'][0]
         image = Image.open(io.BytesIO(base64.b64decode(image_data.split(",",1)[0])))
         image.save('output.png')
-        tex = viz.addTexture('output.png')
-        if sphere is not None:
-            sphere.remove()
-        sphere = vizshape.addSphere(radius=1280, slices=20, stacks=20, axis=vizshape.AXIS_Y, lighting=False, texture=tex, flipFaces=True)
     else:
         print('Error: ', response.status_code, response.reason)
+        
+def update_sphere_task(tex):
+    global last_mod_time, sphere
+    
+
+    sphere.texture(tex)
+    
+def update_texture():
+    global sphere, image
+    #while True:
+    buffer = None
+    #with viz.cluster.MaskedContext(viz.MASTER):
+    tex = viz.addTexture('output.png')
+    buffer = tex.saveToBuffer('.png')
+    texture = viz.addTextureFromBuffer('.png', buffer)
+    yield viz.waitTime(.1)
+    if sphere is not None:
+        sphere.remove()
+    sphere = vizshape.addSphere(radius=127, slices=20, stacks=20, axis=vizshape.AXIS_Y, lighting=False, texture=texture, flipFaces=True)
+    
+    print("sphere added")
+
 
 
 def onSubmit(button, state):
@@ -200,21 +219,22 @@ def onSubmit(button, state):
     if button == submitButton and state == viz.DOWN:
         num_steps = int(numStepsBox.get())
         hiresFix = bool(hires.get())
-        threading.Thread(target=sendAPIrequest, args=(create_prompt(promptBox.get(), lora_name), num_steps, hiresFix)).start()
-        viztask.schedule(update_progress())
+        sendAPIrequest(create_prompt(promptBox.get(), lora_name), num_steps, hiresFix)
 
     if button == seedButton and state == viz.DOWN:
         seed = np.random.randint(0, 1000000000)
         txt2imgGUI.setTitle('seed: ' + str(seed))
 
-    if button == inpaintButton and state == viz.DOWN:
-        txt2imgGUI.visible(viz.OFF)
-        isInpaintMode = True
-        enterInpaintMode()
 
-def createInpaintGUI():
-    global inpaintPanel, inpaintPromptBox, numInpaintStepsBox
-    inpaintPanel = vizinfo.InfoPanel("Inpaint Tool", icon=True)
+
+def enterInpaintMode():
+    global isInpaintMode, sphere, quad, imgTexture, inpaintPanel, txt2imgGUI, inpaintPromptBox, numInpaintStepsBox, imgTexture, aspect_ratio
+    isInpaintMode = True
+    if sphere:
+        sphere.visible(viz.OFF)
+    setupInpaintEnvironment()
+    
+    inpaintPanel = vizinfo.InfoPanel("Inpaint Tool", align=viz.ALIGN_CENTER, icon=False)
     inpaintPromptBox = inpaintPanel.addLabelItem('Enter Inpaint Prompt', viz.addTextbox())
     inpaintPromptBox.overflow(viz.OVERFLOW_GROW)
     numInpaintStepsBox = inpaintPanel.addLabelItem('Number of Inpaint Steps', viz.addTextbox())
@@ -224,16 +244,20 @@ def createInpaintGUI():
     # Link buttons to their functions
     vizact.onbuttondown(submitInpaintButton, onInpaintSubmit)
     vizact.onbuttondown(exitInpaintButton, exitInpaintMode)
-
-def enterInpaintMode():
-    global isInpaintMode, sphere, quad, imgTexture, inpaintPanel, txt2imgGUI
-    isInpaintMode = True
-    if sphere:
-        sphere.visible(viz.OFF)
-    setupInpaintEnvironment()
-    createInpaintGUI()
+    
+    
+    viz.MainWindow.ortho(-aspect_ratio, aspect_ratio, -1, 1, -1, 1)
+    viz.MainView.setPosition(0, 0, 0)
+    viz.MainView.setEuler([.1, .1, .1])
+    # Add a quad to display the image
+    imgTexture = viz.addTexture('output.png')
+    quad = viz.addTexQuad(size=[aspect_ratio*2, 2])
+    quad.setPosition(0, 0, 0)
+    quad.texture(imgTexture)
+    
+    
     viz.mouse.setOverride(viz.ON)
-      # Hide the main GUI
+    txt2imgGUI.visible(viz.OFF)  # Hide the main GUI
 
 
 def exitInpaintMode():
@@ -249,20 +273,20 @@ def exitInpaintMode():
         inpaintPanel = None
     txt2imgGUI.visible(viz.ON)  # Show the main GUI again
     viz.MainWindow.fov(100)
-    viz.MainWindow.visible(viz.ON)
+    if isCAVE:
+         vizconnect.addViewpoint(pos=[0, 10, 0])
+         dtrack_manager = MyDtrackManager()
+         dtrack_manager.startDefaultHeadPosition()
+    viz.MainWindow.fov(100)
     viz.mouse.setOverride(viz.OFF)
 
 # Function to setup the environment for inpaint mode
 def setupInpaintEnvironment():
-    global quad, imgTexture, aspect_ratio, txt2imgGUI
+    global quad, imgTexture, aspect_ratio
     # Set the view to orthographic for 2D view
-
     viz.MainWindow.ortho(-aspect_ratio, aspect_ratio, -1, 1, -1, 1)
     viz.MainView.setPosition(0, 0, 0)
     viz.MainView.setEuler([.1, .1, .1])
-    viz.MainWindow.visible(viz.OFF)
-    with viz.cluster.MaskedContext(viz.MASTER):
-        viz.MainWindow.visible(viz.ON)
     # Add a quad to display the image
     imgTexture = viz.addTexture('output.png')
     quad = viz.addTexQuad(size=[aspect_ratio*2, 2])
@@ -315,7 +339,7 @@ def loadDefaultSphereTexture():
         tex = viz.addTexture('output.png')
         if sphere is not None:
             sphere.remove()
-        sphere = vizshape.addSphere(radius=1280, slices=20, stacks=20, axis=vizshape.AXIS_Y, lighting=False, texture=tex, flipFaces=True)
+        sphere = vizshape.addSphere(radius=128, slices=20, stacks=20, axis=vizshape.AXIS_Y, lighting=False, texture=tex, flipFaces=True)
     except IOError:
         print("Error: Could not load 'output.png'.")
 
@@ -334,25 +358,49 @@ if isCAVE:
     dtrack_manager.startDefaultHeadPosition()
 else:
     viz.go()
-    viz.fov(100)
+    #viz.fov(100)
 
 loadDefaultSphereTexture()
 progressBar = None
 
 # Setup the main GUI
 
+#viztask.schedule(update_texture)
+vizact.ontimer(5,update_texture)
+#viztask.schedule(update_texture)
 
-txt2imgGUI = vizinfo.InfoPanel('', title='Mockup txt2img menu', icon=True, fontSize=15, window=viz.MASTER)
+
+
+
+txt2imgGUI = vizinfo.InfoPanel('', title='txt2img gui menu', icon=True)
+txt2imgGUI.setPanelVisible(viz.OFF)
+with viz.cluster.MaskedContext(viz.MASTER):
+    txt2imgGUI.setPanelVisible(viz.ON)
 promptBox = txt2imgGUI.addLabelItem('Enter Prompt', viz.addTextbox())
 promptBox.overflow(viz.OVERFLOW_GROW)
+txt2imgGUI.addSeparator(padding=(20, 20))
 numStepsBox = txt2imgGUI.addLabelItem('Number of Steps', viz.addTextbox())
-seedButton = txt2imgGUI.addItem(viz.addButtonLabel('Random Seed'), align=viz.ALIGN_RIGHT_CENTER)
+txt2imgGUI.addSeparator(padding=(20, 20))
+seedBox = txt2imgGUI.addLabelItem('Seed: ' + str(seed), viz.addTextbox())
+seedButton = txt2imgGUI.addItem(viz.addButtonLabel('Randomize'), align=viz.ALIGN_RIGHT_CENTER)
+txt2imgGUI.addSeparator(padding=(20, 20))
 progressBar = viz.addProgressBar('Progress')
 txt2imgGUI.addItem(progressBar)
 hires = txt2imgGUI.addLabelItem('hires fix', viz.addCheckbox())
+txt2imgGUI.addSeparator(padding=(20, 20))
 submitButton = txt2imgGUI.addItem(viz.addButtonLabel('Submit'), align=viz.ALIGN_RIGHT_CENTER)
 inpaintButton = txt2imgGUI.addItem(viz.addButtonLabel('Inpaint Mode'), align=viz.ALIGN_RIGHT_CENTER)
 vizact.onbuttondown(submitButton, lambda: onSubmit(submitButton, viz.DOWN))
 vizact.onbuttondown(seedButton, lambda: onSubmit(seedButton, viz.DOWN))
 vizact.onbuttondown(inpaintButton, lambda: onSubmit(inpaintButton, viz.DOWN))
 
+
+
+    
+    
+
+
+
+
+
+#vizact.ontimer(5,update_texture)
